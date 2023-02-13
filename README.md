@@ -17,8 +17,8 @@ parse the rest of the chunk data yet.
 ## Todo
 
 - [ ] Region file parsing
-	- [ ] Parse the chunk size
-	- [ ] Parse the chunk data
+	- [x] Parse the chunk size
+	- [x] Parse the chunk data
 	- [ ] Add methods to the `Chunk` struct:
 		- [ ] Get block at position
 		- [ ] Get various other chunk information
@@ -31,3 +31,4 @@ parse the rest of the chunk data yet.
 	  already broken up into multiple files, for singleplayer
 	  worlds, there are multiple directories in the world folder
 	  that would match these descriptions)*
+- [ ] Directory parsing

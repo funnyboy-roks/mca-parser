@@ -82,6 +82,18 @@ pub struct Region {
     pub coords: (i32, i32),
 }
 
+impl Region {
+    /// Return the chunk at a given x and y coordinate relative to the region or `None` if it has
+    /// not been generated.
+    /// To get the coords actual in-game coords, one must use `(n % 32) >> 4` where `n` is the
+    /// current x or z coord.
+    pub fn get_chunk(&self, x: usize, z: usize) -> Option<Chunk> {
+        // This expression comes from the mcwiki,
+        // see https://minecraft.fandom.com/wiki/Region_file_format#Header
+        self.chunks[((x & 31) + (z & 31) * 32)]
+    }
+}
+
 /// The struct used for parsing the region data
 #[derive(Debug)]
 pub(crate) struct RegionParser<'a> {
@@ -110,7 +122,7 @@ impl<'a> RegionParser<'a> {
             if read < 4 {
                 return Err(Error::from(ErrorKind::UnexpectedEof));
             }
-            self.locations[i] = Location::from(bytes)
+            self.locations[i] = Location::from(bytes);
         }
 
         for i in 0..1024 {
@@ -253,5 +265,11 @@ mod tests {
             "Invalid coords read from filename: {:?}",
             rg.coords
         );
+
+        assert!(
+            rg.get_chunk(0, 0).is_some(),
+            "Chunk at (0, 0) not found in region: {:?}",
+            rg
+        )
     }
 }

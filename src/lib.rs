@@ -333,9 +333,23 @@ pub fn from_directory(_dir_path: &str) -> Result<Vec<Region>> {
 }
 
 /// Get a list of regions from a world directory
-/// This will go into the folder specified and look for the first folder that starts with "DIM",
-/// then look inside that folder for a folder called "region".  This folder should contain all of
-/// the regions.  If any of these values does not hold, then it will return an Error.
+///
+/// A singleplayer world is formatted like this:
+/// ```text
+/// world/
+/// ├─ region/
+/// │  ├─ <regions ...>
+/// ├─ DIM##/
+/// │  ├─ region/
+/// │  │  ├─ <regions ...>
+/// ```
+/// (where `<regions ...>` is the list of regions, and `DIM##` is either `DIM1` or `DIM-1`
+/// This function should get the `region/` folder if present otherwise go to one of the `DIM##`
+/// folders, which should make it work for server world files, since the `world/region/` folder is
+/// not present for nether/end
+///
+/// TODO: Another function that will return all regions for all worlds in the singleplayer folder,
+/// but the main concern is probably that it will use a **_lot_** of memory.
 pub fn from_world(_world_path: &str) -> Result<Vec<Region>> {
     todo!()
 }

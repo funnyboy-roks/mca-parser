@@ -1,4 +1,8 @@
+use fastnbt::{self, ByteArray, IntArray, LongArray, Value};
+use miniz_oxide::inflate;
+use serde::Deserialize;
 use std::{
+    borrow::Cow,
     convert::From,
     fs::File,
     io::{Error, ErrorKind, Read, Result},
@@ -11,6 +15,85 @@ macro_rules! big_endian {
         let val = $arr;
         ((val[0] as u32) << 24 | (val[1] as u32) << 16 | (val[2] as u32) << 8 | (val[3] as u32))
     }};
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ChunkNbt {
+    #[serde(rename = "DataVersion")]
+    pub data_version: i32,
+    #[serde(rename = "xPos")]
+    pub x_pos: i32,
+    #[serde(rename = "yPos")]
+    pub y_pos: i32,
+    #[serde(rename = "Status")]
+    pub status: String,
+    #[serde(rename = "LastUpdate")]
+    pub last_update: i64,
+    pub block_entities: Vec<Value>,
+    #[serde(rename = "CarvingMasks")]
+    pub carving_masks: Option<Value>,
+    #[serde(rename = "Heightmaps")]
+    pub heightmaps: Heightmaps,
+    #[serde(rename = "Lights")]
+    pub lights: Option<Vec<Value>>,
+    #[serde(rename = "Entities")]
+    pub entities: Option<Vec<Value>>,
+    pub fluid_ticks: Vec<Value>,
+    pub block_ticks: Vec<Value>,
+    #[serde(rename = "InhabitedTime")]
+    pub inhabited_time: i64,
+    #[serde(rename = "PostProcessing")]
+    pub post_processing: Vec<Value>,
+    pub structures: Value, // TODO: This
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub struct Heightmaps {
+    pub motion_blocking: Option<LongArray>,
+    pub motion_blocking_no_leaves: Option<LongArray>,
+    pub ocean_floor: Option<LongArray>,
+    pub ocean_floor_wg: Option<LongArray>,
+    pub world_surface: Option<LongArray>,
+    pub world_surface_wg: Option<LongArray>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ChunkSection {
+    #[serde(rename = "Y")]
+    pub y: i8,
+    pub block_states: BlockStates,
+    pub biomes: Biomes,
+    #[serde(rename = "BlockLight")]
+    pub block_light: ByteArray,
+    #[serde(rename = "SkyLight")]
+    pub sky_light: ByteArray,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct BlockStates {
+    pub palette: Vec<BlockState>,
+    pub data: LongArray,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct BlockState {
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Properties")]
+    pub properties: Value,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Biomes {
+    pub palette: Vec<Biome>,
+    pub data: LongArray,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Biome {
+    #[serde(rename = "Name")]
+    pub name: String,
 }
 
 /// Represents a chunk's location in the region file
@@ -58,18 +141,35 @@ impl From<u8> for CompressionType {
 
 /// Represnts a chunk's payload
 /// See https://minecraft.fandom.com/wiki/Region_file_format#Payload
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct ChunkPayload {
     pub length: u32,
     pub compression_type: CompressionType,
+    pub compressed_data: Vec<u8>,
     // TODO: Add `data` item for the data, which will need to be parsed from NBT
 }
 
 /// Represents all data for any given chunk that can be taken from the region file
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct Chunk {
     pub timestamp: u32,
     pub payload: ChunkPayload,
+}
+
+impl Chunk {
+    pub fn get_nbt(&self) -> Result<ChunkNbt> {
+        let uncompressed_data = inflate::decompress_to_vec_zlib(&self.payload.compressed_data);
+        let uncompressed_data = match uncompressed_data {
+            Ok(data) => Ok(data),
+            Err(_) => Err(Error::from(ErrorKind::UnexpectedEof)),
+        }?;
+        let nbt: fastnbt::error::Result<ChunkNbt> = fastnbt::from_bytes(&uncompressed_data);
+        dbg!(&nbt);
+        match nbt {
+            Ok(data) => Ok(data),
+            Err(_) => Err(Error::from(ErrorKind::InvalidData)),
+        }
+    }
 }
 
 /// Represents the contents of a region file
@@ -87,10 +187,10 @@ impl Region {
     /// not been generated.
     /// To get the coords actual in-game coords, one must use `(n % 32) >> 4` where `n` is the
     /// current x or z coord.
-    pub fn get_chunk(&self, x: usize, z: usize) -> Option<Chunk> {
+    pub fn get_chunk(&self, x: usize, z: usize) -> Option<&Chunk> {
         // This expression comes from the mcwiki,
         // see https://minecraft.fandom.com/wiki/Region_file_format#Header
-        self.chunks[((x & 31) + (z & 31) * 32)]
+        (&self.chunks[((x & 31) + (z & 31) * 32)]).as_ref()
     }
 }
 
@@ -152,17 +252,18 @@ impl<'a> RegionParser<'a> {
             return Err(Error::from(ErrorKind::UnexpectedEof));
         }
 
-        let mut chunks = [None; 1024];
+        //let mut chunks = [&None; 1024];
+        let mut chunks = Vec::with_capacity(1024);
         // Iterate over each location (could be timestamps or 0..1024) and get the chunk for that
         // location
         for (i, location) in self.locations.iter().enumerate() {
             let chunk = self.parse_chunk(location, &rest)?;
-            chunks[i] = chunk.map(|payload| Chunk {
+            chunks.push(chunk.map(|payload| Chunk {
                 timestamp: self.timestamps[i],
                 payload,
-            });
+            }));
         }
-        Ok(chunks)
+        Ok(chunks.try_into().expect("Can't convert vec into array."))
     }
 
     fn parse_chunk(&'a self, loc: &Location, bytes: &'a Vec<u8>) -> Result<Option<ChunkPayload>> {
@@ -184,12 +285,13 @@ impl<'a> RegionParser<'a> {
         if chunk_end > bytes.len() {
             return Err(Error::from(ErrorKind::UnexpectedEof));
         }
-        // TODO: Uncompress and parse this as NBT
-        let _compressed_data = &bytes[(start + 5)..chunk_end];
 
+        let compressed_data = (&bytes[(start + 5)..chunk_end]).into();
+        // TODO: Parse the uncompressed_data as NBT using fastnbt
         Ok(Some(ChunkPayload {
             length,
             compression_type,
+            compressed_data,
         }))
     }
 }
@@ -266,10 +368,22 @@ mod tests {
             rg.coords
         );
 
+        let chunk = rg.get_chunk(0, 0);
+
         assert!(
-            rg.get_chunk(0, 0).is_some(),
+            chunk.is_some(),
             "Chunk at (0, 0) not found in region: {:?}",
             rg
-        )
+        );
+
+        let chunk = chunk.unwrap();
+        let nbt = chunk.get_nbt();
+
+        assert!(nbt.is_ok(), "Error when reading chunk nbt: {:?}", nbt);
+
+        let nbt = nbt.unwrap();
+
+        dbg!(nbt);
+        assert!(false);
     }
 }

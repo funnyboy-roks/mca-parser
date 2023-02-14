@@ -1,8 +1,7 @@
-use fastnbt::{self, ByteArray, IntArray, LongArray, Value};
+use fastnbt::{self, ByteArray, LongArray, Value};
 use miniz_oxide::inflate;
 use serde::Deserialize;
 use std::{
-    borrow::Cow,
     convert::From,
     fs::File,
     io::{Error, ErrorKind, Read, Result},
@@ -18,7 +17,7 @@ macro_rules! big_endian {
 }
 
 /// The represents that chunk's nbt data stored in the region file
-/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
+/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
 #[derive(Deserialize, Debug)]
 pub struct ChunkNbt {
     #[serde(rename = "DataVersion")]
@@ -50,7 +49,7 @@ pub struct ChunkNbt {
 }
 
 /// The represents part of a chunk's nbt data stored in the region file
-/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
+/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct Heightmaps {
@@ -63,7 +62,7 @@ pub struct Heightmaps {
 }
 
 /// The represents a section(subchunk) from a chunk's nbt data stored in the region file
-/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
+/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
 #[derive(Deserialize, Debug)]
 pub struct ChunkSection {
     #[serde(rename = "Y")]
@@ -77,7 +76,7 @@ pub struct ChunkSection {
 }
 
 /// The represents part of a chunk's nbt data stored in the region file
-/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
+/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
 #[derive(Deserialize, Debug)]
 pub struct BlockStates {
     pub palette: Vec<BlockState>,
@@ -85,7 +84,7 @@ pub struct BlockStates {
 }
 
 /// The represents part of a chunk's nbt data stored in the region file
-/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
+/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
 #[derive(Deserialize, Debug)]
 pub struct BlockState {
     #[serde(rename = "Name")]
@@ -95,7 +94,7 @@ pub struct BlockState {
 }
 
 /// The represents part of a chunk's nbt data stored in the region file
-/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
+/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
 #[derive(Deserialize, Debug)]
 pub struct Biomes {
     pub palette: Vec<Biome>,
@@ -103,7 +102,7 @@ pub struct Biomes {
 }
 
 /// The represents part of a chunk's nbt data stored in the region file
-/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
+/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
 #[derive(Deserialize, Debug)]
 pub struct Biome {
     #[serde(rename = "Name")]
@@ -111,7 +110,7 @@ pub struct Biome {
 }
 
 /// Represents a chunk's location in the region file
-/// See https://minecraft.fandom.com/wiki/Region_file_format#Chunk_location
+/// See <https://minecraft.fandom.com/wiki/Region_file_format#Chunk_location>
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct Location {
     /// Represents the distance in 4096 byte sectors from the beginning of the file
@@ -132,7 +131,7 @@ impl From<[u8; 4]> for Location {
 }
 
 /// Represents the compression type for a chunk's payload
-/// See https://minecraft.fandom.com/wiki/Region_file_format#Payload
+/// See <https://minecraft.fandom.com/wiki/Region_file_format#Payload>
 #[derive(Debug, Clone, Copy)]
 pub enum CompressionType {
     GZip,         // RFC1952 - Unused in Practice
@@ -154,7 +153,7 @@ impl From<u8> for CompressionType {
 }
 
 /// Represnts a chunk's payload
-/// See https://minecraft.fandom.com/wiki/Region_file_format#Payload
+/// See <https://minecraft.fandom.com/wiki/Region_file_format#Payload>
 #[derive(Debug)]
 pub struct ChunkPayload {
     pub length: u32,
@@ -199,7 +198,7 @@ impl Region {
     /// current x or z coord.
     pub fn get_chunk(&self, x: usize, z: usize) -> Option<&Chunk> {
         // This expression comes from the mcwiki,
-        // see https://minecraft.fandom.com/wiki/Region_file_format#Header
+        // see <https://minecraft.fandom.com/wiki/Region_file_format#Header>
         (&self.chunks[((x & 31) + (z & 31) * 32)]).as_ref()
     }
 }
@@ -391,9 +390,6 @@ mod tests {
 
         assert!(nbt.is_ok(), "Error when reading chunk nbt: {:?}", nbt);
 
-        let nbt = nbt.unwrap();
-
-        dbg!(nbt);
-        assert!(false);
+        let _nbt = nbt.unwrap();
     }
 }

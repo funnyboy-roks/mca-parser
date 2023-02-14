@@ -17,6 +17,8 @@ macro_rules! big_endian {
     }};
 }
 
+/// The represents that chunk's nbt data stored in the region file
+/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
 #[derive(Deserialize, Debug)]
 pub struct ChunkNbt {
     #[serde(rename = "DataVersion")]
@@ -47,6 +49,8 @@ pub struct ChunkNbt {
     pub structures: Value, // TODO: This
 }
 
+/// The represents part of a chunk's nbt data stored in the region file
+/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct Heightmaps {
@@ -58,6 +62,8 @@ pub struct Heightmaps {
     pub world_surface_wg: Option<LongArray>,
 }
 
+/// The represents a section(subchunk) from a chunk's nbt data stored in the region file
+/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
 #[derive(Deserialize, Debug)]
 pub struct ChunkSection {
     #[serde(rename = "Y")]
@@ -70,12 +76,16 @@ pub struct ChunkSection {
     pub sky_light: ByteArray,
 }
 
+/// The represents part of a chunk's nbt data stored in the region file
+/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
 #[derive(Deserialize, Debug)]
 pub struct BlockStates {
     pub palette: Vec<BlockState>,
     pub data: LongArray,
 }
 
+/// The represents part of a chunk's nbt data stored in the region file
+/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
 #[derive(Deserialize, Debug)]
 pub struct BlockState {
     #[serde(rename = "Name")]
@@ -84,12 +94,16 @@ pub struct BlockState {
     pub properties: Value,
 }
 
+/// The represents part of a chunk's nbt data stored in the region file
+/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
 #[derive(Deserialize, Debug)]
 pub struct Biomes {
     pub palette: Vec<Biome>,
     pub data: LongArray,
 }
 
+/// The represents part of a chunk's nbt data stored in the region file
+/// See https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure
 #[derive(Deserialize, Debug)]
 pub struct Biome {
     #[serde(rename = "Name")]
@@ -157,18 +171,14 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    /// Get the nbt data for the chunk
+    /// _Note: This uses quite a bit of memory as it needs to decompress all of the compressed data_
     pub fn get_nbt(&self) -> Result<ChunkNbt> {
-        let uncompressed_data = inflate::decompress_to_vec_zlib(&self.payload.compressed_data);
-        let uncompressed_data = match uncompressed_data {
-            Ok(data) => Ok(data),
-            Err(_) => Err(Error::from(ErrorKind::UnexpectedEof)),
-        }?;
-        let nbt: fastnbt::error::Result<ChunkNbt> = fastnbt::from_bytes(&uncompressed_data);
+        let uncompressed = inflate::decompress_to_vec_zlib(&self.payload.compressed_data);
+        let uncompressed = uncompressed.map_err(|_| Error::from(ErrorKind::UnexpectedEof))?;
+        let nbt: fastnbt::error::Result<ChunkNbt> = fastnbt::from_bytes(&uncompressed);
         dbg!(&nbt);
-        match nbt {
-            Ok(data) => Ok(data),
-            Err(_) => Err(Error::from(ErrorKind::InvalidData)),
-        }
+        nbt.map_err(|_| Error::from(ErrorKind::InvalidData))
     }
 }
 

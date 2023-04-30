@@ -1,13 +1,39 @@
-use fastnbt::{self, ByteArray, LongArray, Value};
+//! # mca-parser
+//!
+//! mca-parser does exactly what it says on the tin.  It parses Minecraft's mca files into a format that
+//! can be used by rust programs.
+//!
+//! The Minecraft Wiki is incredibly helpful for detailed information about the region format and
+//! the chunks within, I'd recommend using it as a reference when using this crate.
+//!
+//! - [Region File Format](https://minecraft.fandom.com/wiki/Region_file_format)
+//! - [Chunk format](https://minecraft.fandom.com/wiki/Chunk_format)
+//!
+//! ## Usage Example
+//!
+//! ```
+//! // Get a region from a given file
+//! let my_region = mca_parser::from_file("r.0.0.mca")?;
+//!
+//! // Get the chunk at (0, 0)
+//! let my_chunk = my_region.get_chunk((0, 0))?;
+//!
+//! // Get the nbt data for that chunk
+//! let my_nbt = my_chunk.get_nbt()?;
+//! ```
+
 use miniz_oxide::inflate;
-use serde::Deserialize;
 use std::{
+    collections::{hash_map::Values, HashMap},
     convert::From,
-    fs::File,
+    fs::{self, File},
     io::{Error, ErrorKind, Read, Result},
     path::Path,
     vec::Vec,
 };
+
+pub mod nbt;
+use nbt::ChunkNbt;
 
 macro_rules! big_endian {
     ($arr: expr) => {{
@@ -16,100 +42,8 @@ macro_rules! big_endian {
     }};
 }
 
-/// The represents that chunk's nbt data stored in the region file
-/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
-#[derive(Deserialize, Debug)]
-pub struct ChunkNbt {
-    #[serde(rename = "DataVersion")]
-    pub data_version: i32,
-    #[serde(rename = "xPos")]
-    pub x_pos: i32,
-    #[serde(rename = "yPos")]
-    pub y_pos: i32,
-    #[serde(rename = "Status")]
-    pub status: String,
-    #[serde(rename = "LastUpdate")]
-    pub last_update: i64,
-    pub block_entities: Vec<Value>,
-    #[serde(rename = "CarvingMasks")]
-    pub carving_masks: Option<Value>,
-    #[serde(rename = "Heightmaps")]
-    pub heightmaps: Heightmaps,
-    #[serde(rename = "Lights")]
-    pub lights: Option<Vec<Value>>,
-    #[serde(rename = "Entities")]
-    pub entities: Option<Vec<Value>>,
-    pub fluid_ticks: Vec<Value>,
-    pub block_ticks: Vec<Value>,
-    #[serde(rename = "InhabitedTime")]
-    pub inhabited_time: i64,
-    #[serde(rename = "PostProcessing")]
-    pub post_processing: Vec<Value>,
-    pub structures: Value, // TODO: This
-}
-
-/// The represents part of a chunk's nbt data stored in the region file
-/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub struct Heightmaps {
-    pub motion_blocking: Option<LongArray>,
-    pub motion_blocking_no_leaves: Option<LongArray>,
-    pub ocean_floor: Option<LongArray>,
-    pub ocean_floor_wg: Option<LongArray>,
-    pub world_surface: Option<LongArray>,
-    pub world_surface_wg: Option<LongArray>,
-}
-
-/// The represents a section(subchunk) from a chunk's nbt data stored in the region file
-/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
-#[derive(Deserialize, Debug)]
-pub struct ChunkSection {
-    #[serde(rename = "Y")]
-    pub y: i8,
-    pub block_states: BlockStates,
-    pub biomes: Biomes,
-    #[serde(rename = "BlockLight")]
-    pub block_light: ByteArray,
-    #[serde(rename = "SkyLight")]
-    pub sky_light: ByteArray,
-}
-
-/// The represents part of a chunk's nbt data stored in the region file
-/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
-#[derive(Deserialize, Debug)]
-pub struct BlockStates {
-    pub palette: Vec<BlockState>,
-    pub data: LongArray,
-}
-
-/// The represents part of a chunk's nbt data stored in the region file
-/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
-#[derive(Deserialize, Debug)]
-pub struct BlockState {
-    #[serde(rename = "Name")]
-    pub name: String,
-    #[serde(rename = "Properties")]
-    pub properties: Value,
-}
-
-/// The represents part of a chunk's nbt data stored in the region file
-/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
-#[derive(Deserialize, Debug)]
-pub struct Biomes {
-    pub palette: Vec<Biome>,
-    pub data: LongArray,
-}
-
-/// The represents part of a chunk's nbt data stored in the region file
-/// See <https://minecraft.fandom.com/wiki/Chunk_format#NBT_structure>
-#[derive(Deserialize, Debug)]
-pub struct Biome {
-    #[serde(rename = "Name")]
-    pub name: String,
-}
-
 /// Represents a chunk's location in the region file
+///
 /// See <https://minecraft.fandom.com/wiki/Region_file_format#Chunk_location>
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct Location {
@@ -131,6 +65,7 @@ impl From<[u8; 4]> for Location {
 }
 
 /// Represents the compression type for a chunk's payload
+///
 /// See <https://minecraft.fandom.com/wiki/Region_file_format#Payload>
 #[derive(Debug, Clone, Copy)]
 pub enum CompressionType {
@@ -153,6 +88,7 @@ impl From<u8> for CompressionType {
 }
 
 /// Represnts a chunk's payload
+///
 /// See <https://minecraft.fandom.com/wiki/Region_file_format#Payload>
 #[derive(Debug)]
 pub struct ChunkPayload {
@@ -181,6 +117,69 @@ impl Chunk {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+pub struct RegionPosition {
+    x: i32,
+    z: i32,
+}
+
+impl From<ChunkPosition> for RegionPosition {
+    fn from(value: ChunkPosition) -> Self {
+        Self {
+            x: value.x / 32,
+            z: value.z / 32,
+        }
+    }
+}
+
+impl From<BlockPosition> for RegionPosition {
+    fn from(value: BlockPosition) -> Self {
+        Self {
+            x: value.x / 16 / 32,
+            z: value.z / 16 / 32,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+pub struct ChunkPosition {
+    x: i32,
+    z: i32,
+}
+
+impl From<BlockPosition> for ChunkPosition {
+    fn from(value: BlockPosition) -> Self {
+        Self {
+            x: value.x / 16,
+            z: value.z / 16,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+pub struct SubChunkPosition {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+impl From<BlockPosition> for SubChunkPosition {
+    fn from(value: BlockPosition) -> Self {
+        Self {
+            x: value.x / 16,
+            y: value.y / 16,
+            z: value.z / 16,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+pub struct BlockPosition {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
 /// Represents the contents of a region file
 #[derive(Debug)]
 pub struct Region {
@@ -188,7 +187,7 @@ pub struct Region {
     pub chunks: [Option<Chunk>; 1024],
     /// Represents the coords in the world of this region in the order of (x, z)
     /// To find these from actual in-game coords, one must divide by 32 for the x and z (or >> 5)
-    pub coords: (i32, i32),
+    pub coords: RegionPosition,
 }
 
 impl Region {
@@ -205,25 +204,37 @@ impl Region {
 
 /// The struct used for parsing the region data
 #[derive(Debug)]
-pub(crate) struct RegionParser<'a> {
-    reader: &'a mut File,
+pub struct RegionParser {
+    reader: File,
     locations: [Location; 1024], // 1024 * 4 byte for the locations of the chunks in the chunk data
     timestamps: [u32; 1024],     // 1024 * 4 byte for the timestamps of the last modifications
+    coords: Option<RegionPosition>,
 }
 
-impl<'a> RegionParser<'a> {
+impl RegionParser {
     /// Create a RegionParser to do the parsing of the file
-    pub fn new(reader: &'a mut File) -> Self {
+    pub fn new(reader: File) -> Self {
         Self {
             reader,
             locations: [Location::from([0; 4]); 1024],
             timestamps: [0; 1024],
+            coords: None,
+        }
+    }
+
+    /// Create a RegionParser to do the parsing of the file
+    pub fn with_coords(reader: File, coords: Option<RegionPosition>) -> Self {
+        Self {
+            reader,
+            locations: [Location::from([0; 4]); 1024],
+            timestamps: [0; 1024],
+            coords,
         }
     }
 
     /// Do the actual parsing for the region file
     /// The `coords` arg is used for the world location of the region (like r.0.0.mca -> (0, 0))
-    pub fn parse(&'a mut self, coords: (i32, i32)) -> Result<Region> {
+    pub fn parse(&mut self) -> Result<Region> {
         let mut bytes = [0_u8; 4];
         for i in 0..1024 {
             // Read the first 1024 * 4 bytes (Location Data 4 bytes each)
@@ -245,11 +256,14 @@ impl<'a> RegionParser<'a> {
 
         // The rest is chunk data...
         let chunks = self.parse_chunks()?;
-        let rg = Region { chunks, coords };
+        let rg = Region {
+            chunks,
+            coords: self.coords.unwrap_or_default(),
+        };
         Ok(rg)
     }
 
-    fn parse_chunks(&'a mut self) -> Result<[Option<Chunk>; 1024]> {
+    fn parse_chunks(&mut self) -> Result<[Option<Chunk>; 1024]> {
         // Grab the rest of the bytes as the locations are not in order and we'll have to jump
         // around the rest of the file quite a bit
         let mut rest = Vec::new();
@@ -275,7 +289,10 @@ impl<'a> RegionParser<'a> {
         Ok(chunks.try_into().expect("Can't convert vec into array."))
     }
 
-    fn parse_chunk(&'a self, loc: &Location, bytes: &'a Vec<u8>) -> Result<Option<ChunkPayload>> {
+    fn parse_chunk(&self, loc: &Location, bytes: &Vec<u8>) -> Result<Option<ChunkPayload>> {
+        if loc.offset == 0 && loc.sector_count == 0 {
+            return Ok(None);
+        }
         let start = (loc.offset - 2) as usize * 4096_usize; // Subtract two from the offset to
                                                             // account for the 8192 bytes that we
                                                             // took from the beginning for the
@@ -285,9 +302,6 @@ impl<'a> RegionParser<'a> {
         }
 
         let length = big_endian!(&bytes[start..(start + 4)]);
-        if (loc.offset == 0 && loc.sector_count == 0) || length == 0 {
-            return Ok(None);
-        }
         let compression_type = CompressionType::from(bytes[start + 4]);
 
         let chunk_end = start + 5 + length as usize;
@@ -305,34 +319,151 @@ impl<'a> RegionParser<'a> {
     }
 }
 
+fn pos_from_name(name: &str) -> Option<RegionPosition> {
+    let parts: Vec<_> = name.split(".").collect();
+
+    if parts.len() >= 3
+        && parts[0] == "r"
+        && parts[1].parse::<i32>().is_ok() // confirm that the second and third parts are nums
+        && parts[2].parse::<i32>().is_ok()
+    {
+        Some(RegionPosition {
+            x: parts[1].parse().expect("Checked in the conditional"),
+            z: parts[2].parse().expect("Checked in the conditional"),
+        })
+    } else {
+        None
+    }
+}
+
 /// Parse a single ".mca" file into a Region.  This will return an error if the file is not a valid
 /// Region file.  The coordinates of the region is taken from the name (r.0.0.mca -> (0, 0)), if
 /// the filename does not fit this format, (0, 0) will be used
 pub fn from_file(file_path: &str) -> Result<Region> {
-    let mut f = File::open(file_path)?;
-    let mut parser = RegionParser::new(&mut f);
+    let f = File::open(file_path)?;
     let name = Path::new(file_path).file_name();
     if let Some(name) = name {
-        let parts: Vec<_> = name.to_str().unwrap().split(".").collect();
-        let mut coords: (i32, i32) = (0, 0);
-        if parts.len() >= 3 {
-            coords.0 = parts[1].parse().unwrap();
-            coords.1 = parts[2].parse().unwrap();
-        }
-        let rg = parser.parse(coords)?;
+        let coords = pos_from_name(name.to_str().unwrap());
+        let mut parser = RegionParser::with_coords(f, coords);
+        let rg = parser.parse()?;
+
         Ok(rg)
     } else {
         Err(Error::from(ErrorKind::InvalidInput))
     }
 }
 
-/// Get a Vec of Regions by parsing all region files in the current folder.  If the file does not
-/// end with ".mca", then it will be ignored.
-pub fn from_directory(_dir_path: &str) -> Result<Vec<Region>> {
-    todo!()
+/// Represents the id for any given dimension, using the default values that Minecraft uses:
+/// -1: Nether
+/// 0: Overworld
+/// 1: End
+///
+/// And `Other` for any other non-standard ids
+#[derive(Debug)]
+pub enum DimensionID {
+    /// ID 0
+    Overworld,
+    /// ID -1
+    Nether,
+    /// ID 1
+    End,
+    Other(i32),
 }
 
-/// Get a list of regions from a world directory
+impl DimensionID {
+    pub fn id(&self) -> i32 {
+        match self {
+            Self::Overworld => 0,
+            Self::Nether => -1,
+            Self::End => 1,
+            Self::Other(n) => *n,
+        }
+    }
+}
+
+impl From<i32> for DimensionID {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => Self::Overworld,
+            -1 => Self::Nether,
+            1 => Self::End,
+            n => Self::Other(n),
+        }
+    }
+}
+
+/// Represents a Dimension with its id and its regions
+#[derive(Debug)]
+pub struct Dimension {
+    pub id: DimensionID,
+    pub regions: HashMap<RegionPosition, RegionParser>,
+}
+
+impl Dimension {
+    /// Get a new dimension using id and path to region files
+    ///
+    /// Returns Result since [`Self::parsers_from_dir`] can fail
+    fn new(id: Option<i32>, dir_path: &str) -> Result<Self> {
+        Ok(Self {
+            id: id.unwrap_or(0).into(),
+            regions: Self::parsers_from_dir(dir_path)?,
+        })
+    }
+
+    /// Get dimension parsers from a directory
+    fn parsers_from_dir(dir_path: &str) -> Result<HashMap<RegionPosition, RegionParser>> {
+        let dir = fs::read_dir(dir_path)?;
+        let mut out = HashMap::new();
+        for path in dir {
+            let path = path?.path();
+            let path = path.to_str();
+            if let Some(file_path) = path {
+                let f = File::open(file_path)?;
+                let name = Path::new(file_path).file_name();
+                if let Some(name) = name {
+                    let coords = pos_from_name(name.to_str().unwrap());
+                    if let Some(coords) = coords {
+                        let parser = RegionParser::with_coords(f, Some(coords));
+                        out.insert(coords, parser);
+                        continue;
+                    }
+                }
+            }
+            return Err(Error::from(ErrorKind::InvalidInput));
+        }
+        Ok(out)
+    }
+
+    /// Get the regions in this Dimension
+    pub fn get_regions(&self) -> Values<RegionPosition, RegionParser> {
+        self.regions.values()
+    }
+
+    /// Get a specific region in this dimension using the region coordinates
+    pub fn get_region(&self, coords: RegionPosition) -> Option<&RegionParser> {
+        self.regions.get(&coords)
+    }
+
+    /// Get a specific region in this dimension using the chunk coordinates
+    pub fn get_region_at_chunk(&self, coords: ChunkPosition) -> Option<&RegionParser> {
+        self.get_region(coords.into())
+    }
+
+    /// Get a specific region in this dimension using the block coordinates
+    ///
+    /// _Note: The `y` value is unused as it has no impact on the region chosen._
+    pub fn get_region_at_block(&self, coords: BlockPosition) -> Option<&RegionParser> {
+        self.get_region(coords.into())
+    }
+}
+
+/// Get a Vec of Regions by parsing all region files in the current folder.  If the file does not
+/// end with ".mca", then it will be ignored.
+pub fn from_directory(dir_path: &str) -> Result<Dimension> {
+    Dimension::new(None, dir_path)
+}
+
+/// Get a list of regions from a singleplayer world directory
 ///
 /// A singleplayer world is formatted like this:
 /// ```text
@@ -348,62 +479,10 @@ pub fn from_directory(_dir_path: &str) -> Result<Vec<Region>> {
 /// folders, which should make it work for server world files, since the `world/region/` folder is
 /// not present for nether/end
 ///
-/// TODO: Another function that will return all regions for all worlds in the singleplayer folder,
-/// but the main concern is probably that it will use a **_lot_** of memory.
-pub fn from_world(_world_path: &str) -> Result<Vec<Region>> {
+/// TODO: Another function that will return all regions for all worlds in the singleplayer folder
+pub fn from_singleplayer_world(_world_path: &str) -> Result<Vec<Region>> {
     todo!()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    macro_rules! big_endian_test {
-        ($arr: expr => $value: literal) => {
-            assert_eq!(big_endian!(&$arr), $value);
-        };
-        ($arr: expr ;=> $value: literal) => {
-            assert_ne!(big_endian!(&$arr), $value);
-        };
-    }
-
-    #[test]
-    fn big_endian() {
-        big_endian_test!([0_u8; 4] => 0);
-        big_endian_test!([1_u8; 4] => 0x01_01_01_01);
-        big_endian_test!([0xff_u8; 4] => 0xff_ff_ff_ff);
-        big_endian_test!([1_u8, 0_u8, 1_u8, 0_u8] => 0x01_00_01_00);
-
-        big_endian_test!([0_u8; 4] ;=> 1);
-        big_endian_test!([1_u8; 4] ;=> 0);
-    }
-
-    #[test]
-    fn reading() {
-        let file_path = "/home/funnyboy_roks/dev/minecraft/mca-parser/test/r.0.0.mca";
-        let rg = from_file(file_path);
-        assert!(rg.is_ok(), "Unable to read test file: {:?}", rg);
-        let rg = rg.unwrap();
-        assert_eq!(
-            rg.coords,
-            (0, 0),
-            "Invalid coords read from filename: {:?}",
-            rg.coords
-        );
-
-        let chunk = rg.get_chunk(0, 0);
-
-        assert!(
-            chunk.is_some(),
-            "Chunk at (0, 0) not found in region: {:?}",
-            rg
-        );
-
-        let chunk = chunk.unwrap();
-        let nbt = chunk.get_nbt();
-
-        assert!(nbt.is_ok(), "Error when reading chunk nbt: {:?}", nbt);
-
-        let _nbt = nbt.unwrap();
-    }
-}
+mod test;

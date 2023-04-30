@@ -22,7 +22,7 @@
 //! let my_nbt = my_chunk.get_nbt()?;
 //! ```
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use miniz_oxide::inflate;
 use std::{
     collections::{hash_map::Values, HashMap},
@@ -72,7 +72,7 @@ impl From<[u8; 4]> for Location {
 /// See <https://minecraft.fandom.com/wiki/Region_file_format#Payload>
 #[derive(Debug, Clone, Copy)]
 pub enum CompressionType {
-    GZip,         // RFC1952 - Unused in Practice
+    GZip,         // RFC1952   Unused in Practice
     Zlib,         // RFC1950
     Uncompressed, //           Unused in Practice
 }
@@ -114,7 +114,7 @@ impl Chunk {
     pub fn get_nbt(&self) -> anyhow::Result<ChunkNbt> {
         let uncompressed = inflate::decompress_to_vec_zlib(&self.payload.compressed_data);
         let uncompressed = uncompressed.map_err(|_| Error::from(ErrorKind::UnexpectedEof))?;
-        fastnbt::from_bytes(&uncompressed).context("Error parsing nbt bytes")?
+        Ok(fastnbt::from_bytes(&uncompressed).context("Error parsing nbt bytes")?)
     }
 }
 
@@ -241,7 +241,7 @@ impl RegionParser {
             // Read the first 1024 * 4 bytes (Location Data 4 bytes each)
             let read = self.reader.read(&mut bytes)?;
             if read < 4 {
-                return Err(Error::from(ErrorKind::UnexpectedEof));
+                bail!(Error::from(ErrorKind::UnexpectedEof));
             }
             self.locations[i] = Location::from(bytes);
         }
@@ -250,7 +250,7 @@ impl RegionParser {
             // Read the next 1024 * 4 bytes (Timestamp Data 4 bytes each)
             let read = self.reader.read(&mut bytes)?;
             if read < 4 {
-                return Err(Error::from(ErrorKind::UnexpectedEof));
+                bail!(Error::from(ErrorKind::UnexpectedEof));
             }
             self.timestamps[i] = big_endian!(&bytes);
         }
@@ -273,7 +273,7 @@ impl RegionParser {
         // Each sector must be 4096 (and they're padded), so if the remaining bytes is not that
         // long, then there is something wrong.
         if rest.len() < 4096 {
-            return Err(Error::from(ErrorKind::UnexpectedEof));
+            bail!(Error::from(ErrorKind::UnexpectedEof));
         }
 
         //let mut chunks = [&None; 1024];
@@ -299,7 +299,7 @@ impl RegionParser {
                                                             // took from the beginning for the
                                                             // location and timestamps
         if start + 4 > bytes.len() {
-            return Err(Error::from(ErrorKind::UnexpectedEof));
+            bail!(Error::from(ErrorKind::UnexpectedEof));
         }
 
         let length = big_endian!(&bytes[start..(start + 4)]);
@@ -307,7 +307,7 @@ impl RegionParser {
 
         let chunk_end = start + 5 + length as usize;
         if chunk_end > bytes.len() {
-            return Err(Error::from(ErrorKind::UnexpectedEof));
+            bail!(Error::from(ErrorKind::UnexpectedEof));
         }
 
         let compressed_data = (&bytes[(start + 5)..chunk_end]).into();
@@ -350,7 +350,7 @@ pub fn from_file(file_path: &str) -> anyhow::Result<Region> {
 
         Ok(rg)
     } else {
-        Err(Error::from(ErrorKind::InvalidInput))
+        bail!(Error::from(ErrorKind::InvalidInput))
     }
 }
 
@@ -430,7 +430,7 @@ impl Dimension {
                     }
                 }
             }
-            anyhow::bail!("File path did not contain coords: {}", path);
+            anyhow::bail!("File path did not contain coords: {:?}", path);
         }
         Ok(out)
     }

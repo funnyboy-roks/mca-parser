@@ -4,7 +4,7 @@
 //! can be used by rust programs.
 //!
 //! The Minecraft Wiki is incredibly helpful for detailed information about the region format and
-//! the chunks within, I'd recommend using it as a reference when using this crate.
+//! the chunks within, I'd recommend using it as a reference when using this crate:
 //!
 //! - [Region File Format](https://minecraft.fandom.com/wiki/Region_file_format)
 //! - [Chunk format](https://minecraft.fandom.com/wiki/Chunk_format)
@@ -22,12 +22,13 @@
 //! let my_nbt = my_chunk.get_nbt()?;
 //! ```
 
+use anyhow::Context;
 use miniz_oxide::inflate;
 use std::{
     collections::{hash_map::Values, HashMap},
     convert::From,
     fs::{self, File},
-    io::{Error, ErrorKind, Read, Result},
+    io::{Error, ErrorKind, Read},
     path::Path,
     vec::Vec,
 };
@@ -35,6 +36,8 @@ use std::{
 pub mod nbt;
 use nbt::ChunkNbt;
 
+/// A simple macro that converts a 4 byte array/slice/vec/etc into a u32 using big_endian
+/// _This is used rather than [`u32::from_be_bytes`] because it consumes the array_
 macro_rules! big_endian {
     ($arr: expr) => {{
         let val = $arr;
@@ -108,12 +111,10 @@ pub struct Chunk {
 impl Chunk {
     /// Get the nbt data for the chunk
     /// _Note: This uses quite a bit of memory as it needs to decompress all of the compressed data_
-    pub fn get_nbt(&self) -> Result<ChunkNbt> {
+    pub fn get_nbt(&self) -> anyhow::Result<ChunkNbt> {
         let uncompressed = inflate::decompress_to_vec_zlib(&self.payload.compressed_data);
         let uncompressed = uncompressed.map_err(|_| Error::from(ErrorKind::UnexpectedEof))?;
-        let nbt: fastnbt::error::Result<ChunkNbt> = fastnbt::from_bytes(&uncompressed);
-        dbg!(&nbt);
-        nbt.map_err(|_| Error::from(ErrorKind::InvalidData))
+        fastnbt::from_bytes(&uncompressed).context("Error parsing nbt bytes")?
     }
 }
 
@@ -234,7 +235,7 @@ impl RegionParser {
 
     /// Do the actual parsing for the region file
     /// The `coords` arg is used for the world location of the region (like r.0.0.mca -> (0, 0))
-    pub fn parse(&mut self) -> Result<Region> {
+    pub fn parse(&mut self) -> anyhow::Result<Region> {
         let mut bytes = [0_u8; 4];
         for i in 0..1024 {
             // Read the first 1024 * 4 bytes (Location Data 4 bytes each)
@@ -263,7 +264,7 @@ impl RegionParser {
         Ok(rg)
     }
 
-    fn parse_chunks(&mut self) -> Result<[Option<Chunk>; 1024]> {
+    fn parse_chunks(&mut self) -> anyhow::Result<[Option<Chunk>; 1024]> {
         // Grab the rest of the bytes as the locations are not in order and we'll have to jump
         // around the rest of the file quite a bit
         let mut rest = Vec::new();
@@ -289,7 +290,7 @@ impl RegionParser {
         Ok(chunks.try_into().expect("Can't convert vec into array."))
     }
 
-    fn parse_chunk(&self, loc: &Location, bytes: &Vec<u8>) -> Result<Option<ChunkPayload>> {
+    fn parse_chunk(&self, loc: &Location, bytes: &Vec<u8>) -> anyhow::Result<Option<ChunkPayload>> {
         if loc.offset == 0 && loc.sector_count == 0 {
             return Ok(None);
         }
@@ -339,7 +340,7 @@ fn pos_from_name(name: &str) -> Option<RegionPosition> {
 /// Parse a single ".mca" file into a Region.  This will return an error if the file is not a valid
 /// Region file.  The coordinates of the region is taken from the name (r.0.0.mca -> (0, 0)), if
 /// the filename does not fit this format, (0, 0) will be used
-pub fn from_file(file_path: &str) -> Result<Region> {
+pub fn from_file(file_path: &str) -> anyhow::Result<Region> {
     let f = File::open(file_path)?;
     let name = Path::new(file_path).file_name();
     if let Some(name) = name {
@@ -403,7 +404,7 @@ impl Dimension {
     /// Get a new dimension using id and path to region files
     ///
     /// Returns Result since [`Self::parsers_from_dir`] can fail
-    fn new(id: Option<i32>, dir_path: &str) -> Result<Self> {
+    fn new(id: Option<i32>, dir_path: &str) -> anyhow::Result<Self> {
         Ok(Self {
             id: id.unwrap_or(0).into(),
             regions: Self::parsers_from_dir(dir_path)?,
@@ -411,7 +412,7 @@ impl Dimension {
     }
 
     /// Get dimension parsers from a directory
-    fn parsers_from_dir(dir_path: &str) -> Result<HashMap<RegionPosition, RegionParser>> {
+    fn parsers_from_dir(dir_path: &str) -> anyhow::Result<HashMap<RegionPosition, RegionParser>> {
         let dir = fs::read_dir(dir_path)?;
         let mut out = HashMap::new();
         for path in dir {
@@ -429,7 +430,7 @@ impl Dimension {
                     }
                 }
             }
-            return Err(Error::from(ErrorKind::InvalidInput));
+            anyhow::bail!("File path did not contain coords: {}", path);
         }
         Ok(out)
     }
@@ -459,7 +460,7 @@ impl Dimension {
 
 /// Get a Vec of Regions by parsing all region files in the current folder.  If the file does not
 /// end with ".mca", then it will be ignored.
-pub fn from_directory(dir_path: &str) -> Result<Dimension> {
+pub fn from_directory(dir_path: &str) -> anyhow::Result<Dimension> {
     Dimension::new(None, dir_path)
 }
 
@@ -480,7 +481,7 @@ pub fn from_directory(dir_path: &str) -> Result<Dimension> {
 /// not present for nether/end
 ///
 /// TODO: Another function that will return all regions for all worlds in the singleplayer folder
-pub fn from_singleplayer_world(_world_path: &str) -> Result<Vec<Region>> {
+pub fn from_singleplayer_world(_world_path: &str) -> anyhow::Result<Vec<Region>> {
     todo!()
 }
 

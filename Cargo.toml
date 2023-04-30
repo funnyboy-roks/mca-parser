@@ -14,6 +14,7 @@ readme = "README.md"
 debug = true
 
 [dependencies]
+anyhow = "1.0.71"
 fastnbt = "2.3.2"
 miniz_oxide = "0.7.1"
 serde = "1.0.152"

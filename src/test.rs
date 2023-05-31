@@ -35,7 +35,7 @@ fn read_file() {
         rg.coords
     );
 
-    let chunk = rg.get_chunk(0, 0);
+    let chunk = rg.get_chunk(ChunkPosition::new(0, 0));
 
     assert!(
         chunk.is_some(),
@@ -48,6 +48,15 @@ fn read_file() {
 
     assert!(nbt.is_ok(), "Error when reading chunk nbt: {:?}", nbt);
 
+    //nbt.as_ref()
+    //    .unwrap()
+    //    .get_block(BlockPosition {
+    //        x: 10,
+    //        y: 20,
+    //        z: 30,
+    //    })
+    //    .unwrap();
+
     let _nbt = nbt.unwrap();
 }
 
@@ -55,6 +64,12 @@ fn read_file() {
 fn read_dir() {
     let file_path = "./test/regions/";
     let rgs = from_directory(file_path);
-    assert!(rgs.is_ok(), "Unable to read test dir: {:?}", rgs);
-    let _rgs = rgs.unwrap();
+
+    assert!(rgs.is_ok(), "Unable to read test dir: {:?}", rgs.err());
+
+    let mut rgs = rgs.unwrap();
+
+    if let Some(rg) = rgs.get_region(RegionPosition::new(5, 5)) {
+        rg.parse().unwrap();
+    }
 }

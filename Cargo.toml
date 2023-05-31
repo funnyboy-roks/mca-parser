@@ -1,6 +1,6 @@
 [package]
 name = "mca-parser"
-version = "0.0.3"
+version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 homepage = "https://github.com/funnyboy-roks/mca-parser"

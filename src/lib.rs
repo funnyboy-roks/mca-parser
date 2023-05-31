@@ -11,24 +11,32 @@
 //!
 //! ## Usage Example
 //!
-//! ```
+//! ```no_run
+//! # // Not running this because we don't want it to read from file
+//! # use mca_parser::ChunkPosition;
 //! // Get a region from a given file
 //! let my_region = mca_parser::from_file("r.0.0.mca")?;
 //!
 //! // Get the chunk at (0, 0)
-//! let my_chunk = my_region.get_chunk((0, 0))?;
+//! if let Some(my_chunk) = my_region.get_chunk(ChunkPosition::new(0, 0)) {
 //!
-//! // Get the nbt data for that chunk
-//! let my_nbt = my_chunk.get_nbt()?;
+//!     // Get the nbt data for that chunk
+//!     let my_nbt = my_chunk.get_nbt()?;
+//!
+//! }
+//! # Ok::<(), anyhow::Error>(())
 //! ```
 
 use anyhow::{bail, Context};
 use miniz_oxide::inflate;
 use std::{
-    collections::{hash_map::Values, HashMap},
+    collections::{
+        hash_map::{Values, ValuesMut},
+        HashMap,
+    },
     convert::From,
     fs::{self, File},
-    io::{Error, ErrorKind, Read},
+    io::{BufReader, Error, ErrorKind, Read},
     path::Path,
     vec::Vec,
 };
@@ -36,8 +44,12 @@ use std::{
 pub mod nbt;
 use nbt::ChunkNbt;
 
+#[cfg(test)]
+mod test;
+
 /// A simple macro that converts a 4 byte array/slice/vec/etc into a u32 using big_endian
 /// _This is used rather than [`u32::from_be_bytes`] because it consumes the array_
+#[macro_export]
 macro_rules! big_endian {
     ($arr: expr) => {{
         let val = $arr;
@@ -114,14 +126,29 @@ impl Chunk {
     pub fn get_nbt(&self) -> anyhow::Result<ChunkNbt> {
         let uncompressed = inflate::decompress_to_vec_zlib(&self.payload.compressed_data);
         let uncompressed = uncompressed.map_err(|_| Error::from(ErrorKind::UnexpectedEof))?;
+        fs::write(
+            "/home/funnyboy_roks/dev/minecraft/mca-parser/test/c.0.0.nbt",
+            &uncompressed,
+        )
+        .unwrap();
         Ok(fastnbt::from_bytes(&uncompressed).context("Error parsing nbt bytes")?)
     }
+
+    //pub fn get_block(&self, pos: BlockPosition) -> anyhow::Result<BlockState> {
+    //    self.get_nbt()?.get_block(pos)
+    //}
 }
 
 #[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
 pub struct RegionPosition {
     x: i32,
     z: i32,
+}
+
+impl RegionPosition {
+    pub fn new(x: i32, z: i32) -> Self {
+        Self { x, z }
+    }
 }
 
 impl From<ChunkPosition> for RegionPosition {
@@ -146,6 +173,12 @@ impl From<BlockPosition> for RegionPosition {
 pub struct ChunkPosition {
     x: i32,
     z: i32,
+}
+
+impl ChunkPosition {
+    pub fn new(x: i32, z: i32) -> Self {
+        Self { x, z }
+    }
 }
 
 impl From<BlockPosition> for ChunkPosition {
@@ -196,17 +229,17 @@ impl Region {
     /// not been generated.
     /// To get the coords actual in-game coords, one must use `(n % 32) >> 4` where `n` is the
     /// current x or z coord.
-    pub fn get_chunk(&self, x: usize, z: usize) -> Option<&Chunk> {
+    pub fn get_chunk(&self, ChunkPosition { x, z }: ChunkPosition) -> Option<&Chunk> {
         // This expression comes from the mcwiki,
         // see <https://minecraft.fandom.com/wiki/Region_file_format#Header>
-        (&self.chunks[((x & 31) + (z & 31) * 32)]).as_ref()
+        (&self.chunks[((x & 31) + (z & 31) * 32) as usize]).as_ref()
     }
 }
 
 /// The struct used for parsing the region data
-#[derive(Debug)]
+//#[derive()]
 pub struct RegionParser {
-    reader: File,
+    reader: Box<dyn Read>,
     locations: [Location; 1024], // 1024 * 4 byte for the locations of the chunks in the chunk data
     timestamps: [u32; 1024],     // 1024 * 4 byte for the timestamps of the last modifications
     coords: Option<RegionPosition>,
@@ -214,9 +247,9 @@ pub struct RegionParser {
 
 impl RegionParser {
     /// Create a RegionParser to do the parsing of the file
-    pub fn new(reader: File) -> Self {
+    pub fn new(read: Box<dyn Read>) -> Self {
         Self {
-            reader,
+            reader: Box::new(read),
             locations: [Location::from([0; 4]); 1024],
             timestamps: [0; 1024],
             coords: None,
@@ -224,9 +257,9 @@ impl RegionParser {
     }
 
     /// Create a RegionParser to do the parsing of the file
-    pub fn with_coords(reader: File, coords: Option<RegionPosition>) -> Self {
+    pub fn with_coords(read: Box<dyn Read>, coords: Option<RegionPosition>) -> Self {
         Self {
-            reader,
+            reader: read,
             locations: [Location::from([0; 4]); 1024],
             timestamps: [0; 1024],
             coords,
@@ -337,15 +370,23 @@ fn pos_from_name(name: &str) -> Option<RegionPosition> {
     }
 }
 
+/// Parse a reader into a region.  This will return an error if the input is not a valid region.
+pub fn from_reader(read: Box<dyn Read>, coords: RegionPosition) -> anyhow::Result<Region> {
+    let mut parser = RegionParser::with_coords(Box::new(read), Some(coords));
+    let rg = parser.parse()?;
+
+    Ok(rg)
+}
+
 /// Parse a single ".mca" file into a Region.  This will return an error if the file is not a valid
 /// Region file.  The coordinates of the region is taken from the name (r.0.0.mca -> (0, 0)), if
 /// the filename does not fit this format, (0, 0) will be used
 pub fn from_file(file_path: &str) -> anyhow::Result<Region> {
-    let f = File::open(file_path)?;
+    let f = BufReader::new(File::open(file_path)?);
     let name = Path::new(file_path).file_name();
     if let Some(name) = name {
         let coords = pos_from_name(name.to_str().unwrap());
-        let mut parser = RegionParser::with_coords(f, coords);
+        let mut parser = RegionParser::with_coords(Box::new(f), coords);
         let rg = parser.parse()?;
 
         Ok(rg)
@@ -394,7 +435,6 @@ impl From<i32> for DimensionID {
 }
 
 /// Represents a Dimension with its id and its regions
-#[derive(Debug)]
 pub struct Dimension {
     pub id: DimensionID,
     pub regions: HashMap<RegionPosition, RegionParser>,
@@ -424,13 +464,13 @@ impl Dimension {
                 if let Some(name) = name {
                     let coords = pos_from_name(name.to_str().unwrap());
                     if let Some(coords) = coords {
-                        let parser = RegionParser::with_coords(f, Some(coords));
+                        let parser = RegionParser::with_coords(Box::new(f), Some(coords));
                         out.insert(coords, parser);
                         continue;
                     }
                 }
             }
-            anyhow::bail!("File path did not contain coords: {:?}", path);
+            bail!("File path did not contain coords: {:?}", path);
         }
         Ok(out)
     }
@@ -440,20 +480,25 @@ impl Dimension {
         self.regions.values()
     }
 
+    /// Get the regions in this Dimension
+    pub fn get_regions_mut(&mut self) -> ValuesMut<RegionPosition, RegionParser> {
+        self.regions.values_mut()
+    }
+
     /// Get a specific region in this dimension using the region coordinates
-    pub fn get_region(&self, coords: RegionPosition) -> Option<&RegionParser> {
-        self.regions.get(&coords)
+    pub fn get_region(&mut self, coords: RegionPosition) -> Option<&mut RegionParser> {
+        self.regions.get_mut(&coords)
     }
 
     /// Get a specific region in this dimension using the chunk coordinates
-    pub fn get_region_at_chunk(&self, coords: ChunkPosition) -> Option<&RegionParser> {
+    pub fn get_region_at_chunk(&mut self, coords: ChunkPosition) -> Option<&mut RegionParser> {
         self.get_region(coords.into())
     }
 
     /// Get a specific region in this dimension using the block coordinates
     ///
     /// _Note: The `y` value is unused as it has no impact on the region chosen._
-    pub fn get_region_at_block(&self, coords: BlockPosition) -> Option<&RegionParser> {
+    pub fn get_region_at_block(&mut self, coords: BlockPosition) -> Option<&mut RegionParser> {
         self.get_region(coords.into())
     }
 }
@@ -484,6 +529,3 @@ pub fn from_directory(dir_path: &str) -> anyhow::Result<Dimension> {
 pub fn from_singleplayer_world(_world_path: &str) -> anyhow::Result<Vec<Region>> {
     todo!()
 }
-
-#[cfg(test)]
-mod test;

@@ -7,12 +7,29 @@ For more information on the format, see the Minecraft wiki page for the
 [Region File
 Format](https://minecraft.fandom.com/wiki/Region_file_format)
 
-## WIP
+## NBT Inaccuracies
 
-Note: this lib is in a very early WIP stage.  The only implemented
-features at the moment is parsing regions from a folder and a file, and
-these "parsed" regions only have the chunk timestamps.  It does not
-parse the rest of the chunk data yet.
+The structure of the nbt data in the files changes in each version.  If
+the data has changed and is incorrect in this lib, please create an
+issue or even a pr to fix it.
+
+As of this moment of writing, the MC Wiki's data on the chunk nbt format
+seems to be very incorrect and I'm having to dig through the data
+myself.  If you would like to help me with this, please feel free to
+reach out and create a pr.
+
+## Testing
+
+Right now, for testing this library, we have to read from files, so one
+will need to create a directory in the root of the project called `test`
+with the following contents:
+
+```
+test/
+├──r.0.0.mca
+└──regions/
+   └── r.5.5.mca
+```
 
 ## Todo
 
@@ -31,4 +48,4 @@ parse the rest of the chunk data yet.
 	  already broken up into multiple files, for singleplayer
 	  worlds, there are multiple directories in the world folder
 	  that would match these descriptions)*
-- [ ] Directory parsing
+- [x] Directory parsing

@@ -10,7 +10,7 @@
 //! everything_ just to make it happy and you'll be just as annoyed as I am!  
 //! &lt;/rant&gt;
 
-use fastnbt::{self, ByteArray, IntArray, LongArray, Value};
+use fastnbt::{self, IntArray, LongArray, Value};
 use serde::Deserialize;
 
 /// The represents that chunk's nbt data stored in the region file

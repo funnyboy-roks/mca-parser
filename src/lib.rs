@@ -37,7 +37,7 @@ use std::{
     convert::From,
     fs::{self, File},
     io::{BufReader, Error, ErrorKind, Read},
-    path::Path,
+    path::PathBuf,
     vec::Vec,
 };
 
@@ -61,13 +61,13 @@ macro_rules! big_endian {
 ///
 /// See <https://minecraft.fandom.com/wiki/Region_file_format#Chunk_location>
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct Location {
+pub struct Location {
     /// Represents the distance in 4096 byte sectors from the beginning of the file
-    offset: u32, // Technically only 3 bytes, but I don't want to use a [u8; 3]
+    pub offset: u32, // Technically only 3 bytes, but I don't want to use a [u8; 3]
 
     /// Represents the count of the sectors in which the chunk data is stored.
     /// _Note: The actual size of the chunk data is probably less than `sector_count * 4096`_
-    sector_count: u8, // Count of sectors from the beginning see the wiki for more info
+    pub sector_count: u8, // Count of sectors from the beginning see the wiki for more info
 }
 
 impl From<[u8; 4]> for Location {
@@ -105,16 +105,15 @@ impl From<u8> for CompressionType {
 /// Represnts a chunk's payload
 ///
 /// See <https://minecraft.fandom.com/wiki/Region_file_format#Payload>
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChunkPayload {
     pub length: u32,
     pub compression_type: CompressionType,
-    pub compressed_data: Vec<u8>,
-    // TODO: Add `data` item for the data, which will need to be parsed from NBT
+    pub compressed_data: Option<Vec<u8>>,
 }
 
 /// Represents all data for any given chunk that can be taken from the region file
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Chunk {
     pub timestamp: u32,
     pub payload: ChunkPayload,
@@ -124,14 +123,13 @@ impl Chunk {
     /// Get the nbt data for the chunk
     /// _Note: This uses quite a bit of memory as it needs to decompress all of the compressed data_
     pub fn get_nbt(&self) -> anyhow::Result<ChunkNbt> {
-        let uncompressed = inflate::decompress_to_vec_zlib(&self.payload.compressed_data);
-        let uncompressed = uncompressed.map_err(|_| Error::from(ErrorKind::UnexpectedEof))?;
-        fs::write(
-            "/home/funnyboy_roks/dev/minecraft/mca-parser/test/c.0.0.nbt",
-            &uncompressed,
-        )
-        .unwrap();
-        Ok(fastnbt::from_bytes(&uncompressed).context("Error parsing nbt bytes")?)
+        if let Some(ref data) = self.payload.compressed_data {
+            let uncompressed = inflate::decompress_to_vec_zlib(data);
+            let uncompressed = uncompressed.map_err(|_| Error::from(ErrorKind::UnexpectedEof))?;
+            Ok(fastnbt::from_bytes(&uncompressed).context("Error parsing nbt bytes")?)
+        } else {
+            bail!("Compressed data not stored.");
+        }
     }
 
     //pub fn get_block(&self, pos: BlockPosition) -> anyhow::Result<BlockState> {
@@ -139,10 +137,10 @@ impl Chunk {
     //}
 }
 
-#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy, Ord, PartialOrd)]
 pub struct RegionPosition {
-    x: i32,
-    z: i32,
+    pub x: i32,
+    pub z: i32,
 }
 
 impl RegionPosition {
@@ -169,10 +167,10 @@ impl From<BlockPosition> for RegionPosition {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy, Ord, PartialOrd)]
 pub struct ChunkPosition {
-    x: i32,
-    z: i32,
+    pub x: i32,
+    pub z: i32,
 }
 
 impl ChunkPosition {
@@ -190,11 +188,11 @@ impl From<BlockPosition> for ChunkPosition {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy, Ord, PartialOrd)]
 pub struct SubChunkPosition {
-    x: i32,
-    y: i32,
-    z: i32,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
 }
 
 impl From<BlockPosition> for SubChunkPosition {
@@ -207,11 +205,11 @@ impl From<BlockPosition> for SubChunkPosition {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone, Copy, Ord, PartialOrd)]
 pub struct BlockPosition {
-    x: i32,
-    y: i32,
-    z: i32,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
 }
 
 /// Represents the contents of a region file
@@ -239,17 +237,17 @@ impl Region {
 /// The struct used for parsing the region data
 //#[derive()]
 pub struct RegionParser {
-    reader: Box<dyn Read>,
-    locations: [Location; 1024], // 1024 * 4 byte for the locations of the chunks in the chunk data
-    timestamps: [u32; 1024],     // 1024 * 4 byte for the timestamps of the last modifications
-    coords: Option<RegionPosition>,
+    pub path: PathBuf,
+    pub locations: [Location; 1024], // 1024 * 4 byte for the locations of the chunks in the chunk data
+    pub timestamps: [u32; 1024],     // 1024 * 4 byte for the timestamps of the last modifications
+    pub coords: Option<RegionPosition>,
 }
 
 impl RegionParser {
     /// Create a RegionParser to do the parsing of the file
-    pub fn new(read: Box<dyn Read>) -> Self {
+    pub fn new(path: PathBuf) -> Self {
         Self {
-            reader: Box::new(read),
+            path,
             locations: [Location::from([0; 4]); 1024],
             timestamps: [0; 1024],
             coords: None,
@@ -257,39 +255,35 @@ impl RegionParser {
     }
 
     /// Create a RegionParser to do the parsing of the file
-    pub fn with_coords(read: Box<dyn Read>, coords: Option<RegionPosition>) -> Self {
+    pub fn with_coords(path: PathBuf, coords: Option<RegionPosition>) -> Self {
         Self {
-            reader: read,
+            path,
             locations: [Location::from([0; 4]); 1024],
             timestamps: [0; 1024],
             coords,
         }
     }
 
-    /// Do the actual parsing for the region file
-    /// The `coords` arg is used for the world location of the region (like r.0.0.mca -> (0, 0))
-    pub fn parse(&mut self) -> anyhow::Result<Region> {
-        let mut bytes = [0_u8; 4];
-        for i in 0..1024 {
-            // Read the first 1024 * 4 bytes (Location Data 4 bytes each)
-            let read = self.reader.read(&mut bytes)?;
-            if read < 4 {
-                bail!(Error::from(ErrorKind::UnexpectedEof));
-            }
-            self.locations[i] = Location::from(bytes);
-        }
+    fn parse_with_data_option(&mut self, keep_data: bool) -> anyhow::Result<Region> {
+        let mut reader = BufReader::new(File::open(&self.path)?);
+        let mut section = [0u8; 4 * 1024];
+        reader.read(&mut section)?;
+        section
+            .chunks(4)
+            .map(|x| TryInto::<[u8; 4]>::try_into(x).unwrap())
+            .map(Location::from)
+            .enumerate()
+            .for_each(|(i, l)| self.locations[i] = l);
 
-        for i in 0..1024 {
-            // Read the next 1024 * 4 bytes (Timestamp Data 4 bytes each)
-            let read = self.reader.read(&mut bytes)?;
-            if read < 4 {
-                bail!(Error::from(ErrorKind::UnexpectedEof));
-            }
-            self.timestamps[i] = big_endian!(&bytes);
-        }
+        reader.read(&mut section)?;
+        section
+            .chunks(4)
+            .map(|b| big_endian!(b))
+            .enumerate()
+            .for_each(|(i, l)| self.timestamps[i] = l);
 
         // The rest is chunk data...
-        let chunks = self.parse_chunks()?;
+        let chunks = self.parse_chunks(reader, keep_data)?;
         let rg = Region {
             chunks,
             coords: self.coords.unwrap_or_default(),
@@ -297,11 +291,27 @@ impl RegionParser {
         Ok(rg)
     }
 
-    fn parse_chunks(&mut self) -> anyhow::Result<[Option<Chunk>; 1024]> {
+    /// Do the actual parsing for the region file
+    /// The `coords` arg is used for the world location of the region (like r.0.0.mca -> (0, 0))
+    pub fn parse(&mut self) -> anyhow::Result<Region> {
+        self.parse_with_data_option(true)
+    }
+
+    /// Do the actual parsing for the region file
+    /// The `coords` arg is used for the world location of the region (like r.0.0.mca -> (0, 0))
+    pub fn parse_without_data(&mut self) -> anyhow::Result<Region> {
+        self.parse_with_data_option(false)
+    }
+
+    fn parse_chunks(
+        &mut self,
+        mut reader: impl Read,
+        keep_data: bool,
+    ) -> anyhow::Result<[Option<Chunk>; 1024]> {
         // Grab the rest of the bytes as the locations are not in order and we'll have to jump
         // around the rest of the file quite a bit
         let mut rest = Vec::new();
-        self.reader.read_to_end(&mut rest)?;
+        reader.read_to_end(&mut rest)?;
 
         // Each sector must be 4096 (and they're padded), so if the remaining bytes is not that
         // long, then there is something wrong.
@@ -309,21 +319,27 @@ impl RegionParser {
             bail!(Error::from(ErrorKind::UnexpectedEof));
         }
 
-        //let mut chunks = [&None; 1024];
-        let mut chunks = Vec::with_capacity(1024);
+        // This hurts me physically: https://github.com/rust-lang/rust/issues/44796#issuecomment-967747810
+        const NONE_CHUNK: Option<Chunk> = None;
+        let mut chunks: [Option<Chunk>; 1024] = [NONE_CHUNK; 1024];
         // Iterate over each location (could be timestamps or 0..1024) and get the chunk for that
         // location
         for (i, location) in self.locations.iter().enumerate() {
-            let chunk = self.parse_chunk(location, &rest)?;
-            chunks.push(chunk.map(|payload| Chunk {
+            let chunk = self.parse_chunk(location, &rest, keep_data)?;
+            chunks[i] = chunk.map(|payload| Chunk {
                 timestamp: self.timestamps[i],
                 payload,
-            }));
+            });
         }
-        Ok(chunks.try_into().expect("Can't convert vec into array."))
+        Ok(chunks)
     }
 
-    fn parse_chunk(&self, loc: &Location, bytes: &Vec<u8>) -> anyhow::Result<Option<ChunkPayload>> {
+    fn parse_chunk(
+        &self,
+        loc: &Location,
+        bytes: &Vec<u8>,
+        keep_data: bool,
+    ) -> anyhow::Result<Option<ChunkPayload>> {
         if loc.offset == 0 && loc.sector_count == 0 {
             return Ok(None);
         }
@@ -343,12 +359,10 @@ impl RegionParser {
             bail!(Error::from(ErrorKind::UnexpectedEof));
         }
 
-        let compressed_data = (&bytes[(start + 5)..chunk_end]).into();
-        // TODO: Parse the uncompressed_data as NBT using fastnbt
         Ok(Some(ChunkPayload {
             length,
             compression_type,
-            compressed_data,
+            compressed_data: keep_data.then(|| (&bytes[(start + 5)..chunk_end]).into()),
         }))
     }
 }
@@ -370,23 +384,14 @@ fn pos_from_name(name: &str) -> Option<RegionPosition> {
     }
 }
 
-/// Parse a reader into a region.  This will return an error if the input is not a valid region.
-pub fn from_reader(read: Box<dyn Read>, coords: RegionPosition) -> anyhow::Result<Region> {
-    let mut parser = RegionParser::with_coords(Box::new(read), Some(coords));
-    let rg = parser.parse()?;
-
-    Ok(rg)
-}
-
 /// Parse a single ".mca" file into a Region.  This will return an error if the file is not a valid
 /// Region file.  The coordinates of the region is taken from the name (r.0.0.mca -> (0, 0)), if
 /// the filename does not fit this format, (0, 0) will be used
-pub fn from_file(file_path: &str) -> anyhow::Result<Region> {
-    let f = BufReader::new(File::open(file_path)?);
-    let name = Path::new(file_path).file_name();
+pub fn from_file(path: PathBuf) -> anyhow::Result<Region> {
+    let name = path.file_name();
     if let Some(name) = name {
         let coords = pos_from_name(name.to_str().unwrap());
-        let mut parser = RegionParser::with_coords(Box::new(f), coords);
+        let mut parser = RegionParser::with_coords(path, coords);
         let rg = parser.parse()?;
 
         Ok(rg)
@@ -444,30 +449,26 @@ impl Dimension {
     /// Get a new dimension using id and path to region files
     ///
     /// Returns Result since [`Self::parsers_from_dir`] can fail
-    fn new(id: Option<i32>, dir_path: &str) -> anyhow::Result<Self> {
+    fn new(id: Option<i32>, dir: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             id: id.unwrap_or(0).into(),
-            regions: Self::parsers_from_dir(dir_path)?,
+            regions: Self::parsers_from_dir(dir)?,
         })
     }
 
     /// Get dimension parsers from a directory
-    fn parsers_from_dir(dir_path: &str) -> anyhow::Result<HashMap<RegionPosition, RegionParser>> {
-        let dir = fs::read_dir(dir_path)?;
+    fn parsers_from_dir(dir: PathBuf) -> anyhow::Result<HashMap<RegionPosition, RegionParser>> {
+        let dir = fs::read_dir(dir)?;
         let mut out = HashMap::new();
         for path in dir {
             let path = path?.path();
-            let path = path.to_str();
-            if let Some(file_path) = path {
-                let f = File::open(file_path)?;
-                let name = Path::new(file_path).file_name();
-                if let Some(name) = name {
-                    let coords = pos_from_name(name.to_str().unwrap());
-                    if let Some(coords) = coords {
-                        let parser = RegionParser::with_coords(Box::new(f), Some(coords));
-                        out.insert(coords, parser);
-                        continue;
-                    }
+            let name = path.file_name();
+            if let Some(name) = name {
+                let coords = pos_from_name(name.to_str().unwrap());
+                if let Some(coords) = coords {
+                    let parser = RegionParser::with_coords(path, Some(coords));
+                    out.insert(coords, parser);
+                    continue;
                 }
             }
             bail!("File path did not contain coords: {:?}", path);
@@ -505,8 +506,8 @@ impl Dimension {
 
 /// Get a Vec of Regions by parsing all region files in the current folder.  If the file does not
 /// end with ".mca", then it will be ignored.
-pub fn from_directory(dir_path: &str) -> anyhow::Result<Dimension> {
-    Dimension::new(None, dir_path)
+pub fn from_directory(dir: PathBuf) -> anyhow::Result<Dimension> {
+    Dimension::new(None, dir)
 }
 
 /// Get a list of regions from a singleplayer world directory

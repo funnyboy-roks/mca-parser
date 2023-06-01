@@ -25,7 +25,7 @@ fn big_endian() {
 #[test]
 fn read_file() {
     let file_path = "./test/r.0.0.mca";
-    let rg = from_file(file_path);
+    let rg = from_file(PathBuf::from(file_path));
     assert!(rg.is_ok(), "Unable to read test file: {:?}", rg);
     let rg = rg.unwrap();
     assert_eq!(
@@ -63,7 +63,7 @@ fn read_file() {
 #[test]
 fn read_dir() {
     let file_path = "./test/regions/";
-    let rgs = from_directory(file_path);
+    let rgs = from_directory(PathBuf::from(file_path));
 
     assert!(rgs.is_ok(), "Unable to read test dir: {:?}", rgs.err());
 

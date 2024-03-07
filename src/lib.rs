@@ -27,10 +27,22 @@
 //! # Ok::<(), mca_parser::error::Error>(())
 //! ```
 
-// TODO: Figure out a nice way to encode the types of coordinates into the type system
+// TODO: Figure out a nice way to encode the types of coordinates into the type system:
 //     - i.e. relative vs absolute and region vs chunk vs block
 //     - probably use a trait of some kind so that we can convert between them easily (maybe
 //     just `Into`)
+//
+// TODO: Add parsing for singplayer worlds:
+//     - Open the world folder, look for the `regions` dir which will be the overworld, look for
+//     any dirs that start with `DIR`, those will be the other dimensions
+//     - Put it into a struct that allows some handy methods
+//
+// TODO: Add parsing for server worlds:
+//     - Open the server folder
+//     - Open the user-specified worlds (we can't assume since world folder names can be customised
+//     on a server)
+//     - The user will need to specify quite a bit more for the server worlds since they can change
+//     more (dimension id, world folder, etc)
 
 use std::{
     collections::HashMap,

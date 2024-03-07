@@ -1,17 +1,11 @@
 [package]
 name = "mca-parser"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 license = "Apache-2.0"
 homepage = "https://github.com/funnyboy-roks/mca-parser"
 repository = "https://github.com/funnyboy-roks/mca-parser"
-description = "A simple library for parsing Minecraft's .mca format"
-readme = "README.md"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[profile.release]
-debug = true
+description = "A library for parsing Minecraft's region files"
 
 [dependencies]
 fastnbt = "2.3.2"

@@ -53,7 +53,7 @@ impl NamespacedKey {
     }
 
     /// Create a new NamespacedKey using the `minecraft` namespace
-    pub fn minecraft(key: String) -> Self {
+    pub const fn minecraft(key: String) -> Self {
         Self {
             namespace: Namespace::Minecraft,
             key,
@@ -102,7 +102,7 @@ pub struct ChunkNbt {
     /// All status except [`Status::Full`] are used for chunks called proto-chunks, in other words,
     /// for chunks with incomplete generation.
     #[serde(rename = "Status")]
-    pub status: Status,
+    pub status: NamespacedKey,
     /// Tick when the chunk was last saved.
     #[serde(rename = "LastUpdate")]
     pub last_update: i64,
@@ -122,7 +122,7 @@ pub struct ChunkNbt {
     #[serde(rename = "InhabitedTime")]
     pub inhabited_time: i64,
     /// This appears to be biome blending data, although more testing is needed to confirm.
-    pub blending_data: BlendingData,
+    pub blending_data: Option<BlendingData>,
     /// A List of 24  Lists that store the positions of blocks that need to receive an update when
     /// a proto-chunk turns into a full chunk, packed in  Shorts. Each list corresponds to specific
     /// section in the height of the chunk
@@ -134,44 +134,6 @@ pub struct ChunkNbt {
     ///
     /// All sections in the world's height are present in this list, even those who are empty (filled with air).
     pub sections: Vec<ChunkSection>,
-}
-
-/// Possible statuses for the `status` field in [`ChunkNbt`]
-#[derive(Deserialize, Debug, Clone, PartialEq)]
-pub enum Status {
-    /// `minecraft:empty`
-    #[serde(rename = "minecraft:empty")]
-    Empty,
-    /// `minecraft:structure_starts`
-    #[serde(rename = "minecraft:structure_starts")]
-    StructureStarts,
-    /// `minecraft:structure_references`
-    #[serde(rename = "minecraft:structure_references")]
-    StructureReferences,
-    /// `minecraft:biomes`
-    #[serde(rename = "minecraft:biomes")]
-    Biomes,
-    /// `minecraft:noise`
-    #[serde(rename = "minecraft:noise")]
-    Noise,
-    /// `minecraft:surface`
-    #[serde(rename = "minecraft:surface")]
-    Surface,
-    /// `minecraft:carvers`
-    #[serde(rename = "minecraft:carvers")]
-    Carvers,
-    /// `minecraft:features`
-    #[serde(rename = "minecraft:features")]
-    Features,
-    /// `minecraft:light`
-    #[serde(rename = "minecraft:light")]
-    Light,
-    /// `minecraft:spawn`
-    #[serde(rename = "minecraft:spawn")]
-    Spawn,
-    /// `minecraft:full`
-    #[serde(rename = "minecraft:full")]
-    Full,
 }
 
 /// From the wiki: This appears to be biome blending data, although more testing is needed to confirm.
@@ -195,21 +157,21 @@ pub struct BlendingData {
 pub struct HeightMaps {
     /// Stores the Y-level of the highest block whose material blocks motion (i.e. has a collision
     /// box) or blocks that contains a fluid (water, lava, or waterlogging blocks).
-    pub motion_blocking: HeightMap,
+    pub motion_blocking: Option<HeightMap>,
     /// Stores the Y-level of the highest block whose material blocks motion (i.e. has a collision
     /// box), or blocks that contains a fluid (water, lava, or waterlogging blocks), except various
     /// leaves. Used only on the server side.
-    pub motion_blocking_no_leaves: HeightMap,
+    pub motion_blocking_no_leaves: Option<HeightMap>,
     /// Stores the Y-level of the highest block whose material blocks motion (i.e. has a collision
     /// box). One exception is carpets, which are considered to not have a collision box to
     /// heightmaps. Used only on the server side.
-    pub ocean_floor: HeightMap,
+    pub ocean_floor: Option<HeightMap>,
     /// Stores the Y-level of the highest block whose material blocks motion (i.e. has a collision
     /// box). Used only during world generation, and automatically deleted after carvers are
     /// generated.
     pub ocean_floor_wg: Option<HeightMap>,
     /// Stores the Y-level of the highest non-air (all types of air) block.
-    pub world_surface: HeightMap,
+    pub world_surface: Option<HeightMap>,
     /// Stores the Y-level of the highest non-air (all types of air) block. Used only during world
     /// generation, and automatically deleted after carvers are generated.
     pub world_surface_wg: Option<HeightMap>,
@@ -240,8 +202,7 @@ impl HeightMap {
 
         let index = (block_z * 16 + block_x) as usize;
 
-        let num = dbg!(self.raw[index / 7]) as u64 >> dbg!((index % 7) * 9) & (2u64.pow(9) - 1);
-        dbg!(num);
+        let num = self.raw[index / 7] as u64 >> ((index % 7) * 9) & (2u64.pow(9) - 1);
 
         num as i32 - 65
     }

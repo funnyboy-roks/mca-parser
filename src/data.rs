@@ -122,7 +122,7 @@ impl ParsedChunk {
     /// Get a block from a chunk using block_{x,y,z}.  The x and z coordinates are relative to the chunk,
     /// and the y coordinate is absolute, so (0, 0, 0) is block 0, 0 in the chunk and y=0 in the
     /// world.
-    pub fn get_block(&self, block_x: u32, block_y: i32, block_z: u32) -> Option<nbt::BlockState> {
+    pub fn get_block(&self, block_x: u32, block_y: i32, block_z: u32) -> Option<&nbt::BlockState> {
         let subchunk = self.get_chunk_section_at(block_y)?;
 
         assert!(block_x < 16);
@@ -130,15 +130,16 @@ impl ParsedChunk {
 
         let block_y: u32 = positive_mod!(block_y, 16) as u32;
 
-        let bs = subchunk.clone().block_states?;
+        let bs = subchunk.block_states.as_ref()?;
 
-        let block_states: Vec<_> = if let Some(data) = bs.data {
-            data.iter().map(|n| *n as u64).collect()
+        let block_states = if let Some(data) = &bs.data {
+            data
         } else {
-            return Some(nbt::BlockState {
-                name: "minecraft:air".into(),
-                properties: None,
-            });
+            // return Some(nbt::BlockState {
+            //     name: "minecraft:air".into(),
+            //     properties: None,
+            // });
+            return None;
         };
 
         let bits = std::cmp::max((bs.palette.len() as f32).log2().ceil() as u32, 4);
@@ -146,7 +147,7 @@ impl ParsedChunk {
         let block_index = block_y * 16 * 16 + block_z * 16 + block_x;
         let block = get_item_in_packed_slice(&block_states, block_index as usize, bits);
 
-        Some(bs.palette[block as usize].clone())
+        Some(&bs.palette[block as usize])
     }
 
     /// Get a block from a chunk using block_{x,y,z}.  The coordinates are absolute in the
@@ -159,19 +160,19 @@ impl ParsedChunk {
         block_x: u32,
         block_y: i32,
         block_z: u32,
-    ) -> Option<nbt::BlockState> {
+    ) -> Option<&nbt::BlockState> {
         self.get_block(block_x % 16, block_y, block_z % 16)
     }
 }
 
-fn get_item_in_packed_slice(slice: &[u64], index: usize, bits: u32) -> u64 {
+fn get_item_in_packed_slice(slice: &[i64], index: usize, bits: u32) -> u64 {
     let nums_per_u64 = u64::BITS / bits;
     assert_eq!(
         (slice.len() as u32),
         ((4096. / nums_per_u64 as f32).ceil() as u32)
     );
     let index_in_num = index as u32 % nums_per_u64;
-    let shifted_num = slice[index / nums_per_u64 as usize] >> bits * index_in_num;
+    let shifted_num = slice[index / nums_per_u64 as usize] as u64 >> bits * index_in_num;
     shifted_num & (2u64.pow(bits) - 1)
 }
 

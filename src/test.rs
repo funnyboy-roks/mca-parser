@@ -268,7 +268,7 @@ fn test_dimension() {
 fn test_heightmaps() {
     let chunk = REGION.get_chunk(0, 0).unwrap().unwrap().parse().unwrap();
 
-    let mb = &chunk.height_maps.motion_blocking;
+    let mb = &chunk.height_maps.motion_blocking.as_ref().unwrap();
     // for x in 0..16 {
     //     for z in 0..16 {
     //         eprintln!("{:?} = {}", (x, z), mb.get_height(x, z));
@@ -283,7 +283,7 @@ fn test_block_in_chunk() {
 
     // mostly checking to confirm it doesn't crash
     assert_eq!(
-        chunk.get_block(4, 84, 10).unwrap(),
+        *chunk.get_block(4, 84, 10).unwrap(),
         nbt::BlockState {
             name: nbt::NamespacedKey::minecraft("grass_block".into()),
             properties: Some(fastnbt::nbt!({
@@ -292,11 +292,5 @@ fn test_block_in_chunk() {
         }
     );
 
-    assert_eq!(
-        chunk.get_block(13, 200, 15).unwrap(),
-        nbt::BlockState {
-            name: nbt::NamespacedKey::minecraft("air".into()),
-            properties: None,
-        }
-    )
+    assert_eq!(chunk.get_block(13, 200, 15), None)
 }
